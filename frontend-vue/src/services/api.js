@@ -1,43 +1,19 @@
-import { supabase } from './supabaseClient'; // Using the Supabase client for direct DB interactions
-import apiClient from './apiClient'; // Axios client for other backend interactions (agent, sandbox, etc.)
-// We will also need the auth store to get user ID for filtering, etc.
+import { supabase } from './supabaseClient';
+import apiClient from './apiClient';
 import { useAuthStore } from '@/store/auth';
 import pinia from '@/store';
 
-// Helper to get current user ID from auth store
 function getCurrentUserId() {
-  const auth = useAuthStore(pinia); // Access store outside component setup
-  if (!auth.user) {
-    // console.warn('User not authenticated. Cannot perform user-specific API call.');
-    // throw new Error('User not authenticated.'); // Or handle as per app's requirements
-    return null;
-  }
+  const auth = useAuthStore(pinia);
+  if (!auth.user) { return null; }
   return auth.user.id;
 }
 
-/**
- * @typedef {Object} ApiErrorDetail
- * @property {string} message
- * @property {string} [code]
- * @property {any} [details]
- * @property {number} [status]
- */
-
-/**
- * Handles API errors, logs them, and can be extended for user notifications.
- * @param {Error | any} error - The error object from the API call.
- * @param {object} [context={}] - Additional context for the error.
- * @param {string} [context.operation] - The operation that failed (e.g., 'load projects').
- * @param {string} [context.resource] - The resource being accessed.
- * @returns {ApiErrorDetail} A structured error detail.
- */
 export function handleApiError(error, context = {}) {
   const operation = context.operation || 'API operation';
   const resource = context.resource || 'resource';
   let errorMessage = `Failed to ${operation}`;
-  if (resource) {
-    errorMessage += ` for ${resource}`;
-  }
+  if (resource) { errorMessage += ` for ${resource}`; }
 
   let errorDetail = {
     message: 'An unknown error occurred.',
@@ -46,41 +22,20 @@ export function handleApiError(error, context = {}) {
     details: error.details || error.response?.data?.detail || null,
   };
 
-  if (error && error.message) {
-    errorDetail.message = error.message;
-  }
-
-  // If it's an Axios error, the actual error message from backend might be in error.response.data.detail
+  if (error && error.message) { errorDetail.message = error.message; }
   if (error.response?.data?.detail) {
     errorDetail.message = typeof error.response.data.detail === 'string'
         ? error.response.data.detail
         : JSON.stringify(error.response.data.detail);
   }
-
-
   console.error(`${errorMessage}:`, errorDetail.message, 'Code:', errorDetail.code, 'Status:', errorDetail.status, 'Details:', errorDetail.details || error);
   return errorDetail;
 }
 
-
-// --- Project Management Functions (using Supabase client)---
-// ... (previous project functions remain here) ...
-/**
- * @typedef {Object} Project
- * @property {string} id - Project ID (maps to project_id in DB)
- * @property {string} name
- * @property {string | null} description
- * @property {string} account_id - User ID of the owner
- * @property {string} created_at
- * @property {string | null} updated_at
- * @property {object | null} sandbox - Sandbox details
- */
+// --- Project Management Functions ---
 export async function getProjects() {
   const userId = getCurrentUserId();
-  if (!userId) {
-    console.log('getProjects: No user logged in, returning empty array.');
-    return [];
-  }
+  if (!userId) { console.log('getProjects: No user logged in, returning empty array.'); return []; }
   try {
     const { data, error } = await supabase.from('projects').select('*').eq('account_id', userId).order('created_at', { ascending: false });
     if (error) throw error;
@@ -92,10 +47,7 @@ export async function getProjects() {
 }
 export async function getProject(projectId) {
   const userId = getCurrentUserId();
-  if (!userId && !projectId.startsWith('public_')) {
-     console.log('getProject: No user logged in for a private project.');
-     return null;
-  }
+  if (!userId && !projectId.startsWith('public_')) { console.log('getProject: No user logged in for a private project.'); return null; }
   try {
     let query = supabase.from('projects').select('*').eq('project_id', projectId);
     const { data, error } = await query.single();
@@ -114,10 +66,7 @@ export async function getProject(projectId) {
 }
 export async function createProject(projectData) {
   const userId = getCurrentUserId();
-  if (!userId) {
-    handleApiError(new Error('User must be logged in to create a project.'), { operation: 'create project' });
-    return null;
-  }
+  if (!userId) { handleApiError(new Error('User must be logged in to create a project.'), { operation: 'create project' }); return null; }
   try {
     const { data, error } = await supabase.from('projects').insert({ name: projectData.name, description: projectData.description || null, account_id: userId, }).select().single();
     if (error) throw error;
@@ -129,10 +78,7 @@ export async function createProject(projectData) {
 }
 export async function updateProject(projectId, updateData) {
   const userId = getCurrentUserId();
-  if (!userId) {
-     handleApiError(new Error('User must be logged in to update a project.'), { operation: 'update project' });
-    return null;
-  }
+  if (!userId) { handleApiError(new Error('User must be logged in to update a project.'), { operation: 'update project' }); return null; }
   const { id, project_id, account_id, created_at, ...validUpdateData } = updateData;
   try {
     const { data, error } = await supabase.from('projects').update(validUpdateData).eq('project_id', projectId).eq('account_id', userId).select().single();
@@ -145,10 +91,7 @@ export async function updateProject(projectId, updateData) {
 }
 export async function deleteProject(projectId) {
   const userId = getCurrentUserId();
-   if (!userId) {
-    handleApiError(new Error('User must be logged in to delete a project.'), { operation: 'delete project' });
-    return false;
-  }
+  if (!userId) { handleApiError(new Error('User must be logged in to delete a project.'), { operation: 'delete project' }); return false; }
   try {
     const { error } = await supabase.from('projects').delete().eq('project_id', projectId).eq('account_id', userId);
     if (error) throw error;
@@ -159,23 +102,10 @@ export async function deleteProject(projectId) {
   }
 }
 
-// --- Thread Management Functions (using Supabase client) ---
-// ... (previous thread functions remain here) ...
-/**
- * @typedef {Object} Thread
- * @property {string} thread_id
- * @property {string | null} project_id
- * @property {string} account_id
- * @property {boolean} is_public
- * @property {string} created_at
- * @property {string | null} updated_at
- */
+// --- Thread Management Functions ---
 export async function getThreads(projectId) {
   const userId = getCurrentUserId();
-  if (!userId) {
-    console.log('getThreads: No user logged in, returning empty array.');
-    return [];
-  }
+  if (!userId) { console.log('getThreads: No user logged in, returning empty array.'); return []; }
   try {
     let query = supabase.from('threads').select('*').eq('account_id', userId).order('created_at', { ascending: false });
     if (projectId) { query = query.eq('project_id', projectId); }
@@ -189,10 +119,7 @@ export async function getThreads(projectId) {
 }
 export async function getThread(threadId) {
   const userId = getCurrentUserId();
-   if (!userId && !threadId.startsWith('public_')) {
-     console.log('getThread: No user logged in for a private thread.');
-     return null;
-  }
+  if (!userId && !threadId.startsWith('public_')) { console.log('getThread: No user logged in for a private thread.'); return null; }
   try {
     const { data, error } = await supabase.from('threads').select('*').eq('thread_id', threadId).single();
     if (error) {
@@ -210,10 +137,7 @@ export async function getThread(threadId) {
 }
 export async function createThread(threadData = {}) {
   const userId = getCurrentUserId();
-  if (!userId) {
-    handleApiError(new Error('User must be logged in to create a thread.'), { operation: 'create thread' });
-    return null;
-  }
+  if (!userId) { handleApiError(new Error('User must be logged in to create a thread.'), { operation: 'create thread' }); return null; }
   try {
     const { data, error } = await supabase.from('threads').insert({ project_id: threadData.project_id || null, account_id: userId, }).select().single();
     if (error) throw error;
@@ -225,10 +149,7 @@ export async function createThread(threadData = {}) {
 }
 export async function updateThread(threadId, updateData) {
   const userId = getCurrentUserId();
-  if (!userId) {
-    handleApiError(new Error('User must be logged in to update a thread.'), { operation: 'update thread' });
-    return null;
-  }
+  if (!userId) { handleApiError(new Error('User must be logged in to update a thread.'), { operation: 'update thread' }); return null; }
   const { thread_id, account_id, created_at, ...validUpdateData } = updateData;
   try {
     const { data, error } = await supabase.from('threads').update(validUpdateData).eq('thread_id', threadId).eq('account_id', userId).select().single();
@@ -241,10 +162,7 @@ export async function updateThread(threadId, updateData) {
 }
 export async function deleteThread(threadId) {
   const userId = getCurrentUserId();
-  if (!userId) {
-    handleApiError(new Error('User must be logged in to delete a thread.'), { operation: 'delete thread' });
-    return false;
-  }
+  if (!userId) { handleApiError(new Error('User must be logged in to delete a thread.'), { operation: 'delete thread' }); return false; }
   try {
     const { error } = await supabase.from('threads').delete().eq('thread_id', threadId).eq('account_id', userId);
     if (error) throw error;
@@ -255,20 +173,10 @@ export async function deleteThread(threadId) {
   }
 }
 
-// --- Message Management Functions (Example - using Supabase client) ---
-// ... (previous message functions remain here) ...
-/**
- * @typedef {Object} MessagePayload
- * @property {string} role - e.g., 'user', 'assistant'
- * @property {string} content - The actual message content
- */
-/** @typedef {Object} Message ... */
+// --- Message Management Functions ---
 export async function addUserMessage(threadId, textContent) {
   const userId = getCurrentUserId();
-  if (!userId) {
-    handleApiError(new Error('User must be logged in to add a message.'), { operation: 'add message' });
-    return null;
-  }
+  if (!userId) { handleApiError(new Error('User must be logged in to add a message.'), { operation: 'add message' }); return null; }
   try {
     const messagePayload = { role: 'user', content: textContent, };
     const { data, error } = await supabase.from('messages').insert({ thread_id: threadId, type: 'user', is_llm_message: true, content: JSON.stringify(messagePayload), }).select().single();
@@ -281,10 +189,7 @@ export async function addUserMessage(threadId, textContent) {
 }
 export async function getMessages(threadId) {
   const userId = getCurrentUserId();
-  if (!userId && !threadId.startsWith('public_')) {
-     console.log('getMessages: No user logged in for a private thread.');
-    return [];
-  }
+  if (!userId && !threadId.startsWith('public_')) { console.log('getMessages: No user logged in for a private thread.'); return []; }
   try {
     const { data, error } = await supabase.from('messages').select('*').eq('thread_id', threadId).order('created_at', { ascending: true });
     if (error) throw error;
@@ -295,197 +200,110 @@ export async function getMessages(threadId) {
   }
 }
 
-
-// --- Agent Management Functions (using apiClient for custom FastAPI backend) ---
-
-/**
- * @typedef {Object} Agent
- * @property {string} agent_id
- * @property {string} name
- * @property {string|null} description
- * @property {string} system_prompt
- * @property {Array<Object>|null} configured_mcps
- * @property {Object|null} agentpress_tools
- * @property {boolean} is_default
- * @property {boolean} is_public
- * @property {string|null} marketplace_published_at
- * @property {number} download_count
- * @property {Array<string>|null} tags
- * @property {string|null} avatar
- * @property {string|null} avatar_color
- * @property {string} created_at
- * @property {string} updated_at
- * @property {string|null} creator_name - For marketplace agents
- */
-
-/**
- * Fetches public agents from the marketplace.
- * @param {Object} [params] - Optional query parameters (search, tags, limit, offset)
- * @returns {Promise<{agents: Agent[]}>}
- */
+// --- Agent Management Functions ---
 export async function getMarketplaceAgents(params = {}) {
-  try {
-    const response = await apiClient.get('/marketplace/agents', { params });
-    return response.data; // Expected: { agents: Agent[] }
-  } catch (error) {
-    throw handleApiError(error, { operation: 'load marketplace agents' });
-  }
+  try { const response = await apiClient.get('/marketplace/agents', { params }); return response.data; }
+  catch (error) { throw handleApiError(error, { operation: 'load marketplace agents' }); }
 }
-
-/**
- * Fetches details for a specific agent.
- * @param {string} agentId
- * @returns {Promise<Agent>}
- */
 export async function getAgentDetails(agentId) {
-  try {
-    const response = await apiClient.get(`/agents/${agentId}`);
-    return response.data;
-  } catch (error) {
-    throw handleApiError(error, { operation: 'load agent details', resource: `agent ${agentId}` });
-  }
+  try { const response = await apiClient.get(`/agents/${agentId}`); return response.data; }
+  catch (error) { throw handleApiError(error, { operation: 'load agent details', resource: `agent ${agentId}` }); }
 }
-
-/**
- * Adds a marketplace agent to the user's library.
- * @param {string} agentId - The ID of the marketplace agent.
- * @returns {Promise<{message: string, new_agent_id: string}>}
- */
 export async function addAgentToLibrary(agentId) {
-  try {
-    const response = await apiClient.post(`/marketplace/agents/${agentId}/add-to-library`);
-    return response.data;
-  } catch (error) {
-    throw handleApiError(error, { operation: 'add agent to library', resource: `agent ${agentId}` });
-  }
+  try { const response = await apiClient.post(`/marketplace/agents/${agentId}/add-to-library`); return response.data; }
+  catch (error) { throw handleApiError(error, { operation: 'add agent to library', resource: `agent ${agentId}` }); }
 }
-
-// Note: removeAgentFromLibrary might not be a direct "remove from library" if it's a copy.
-// It might be equivalent to deleting a user's own agent.
-// If it's a distinct operation, the endpoint needs to be defined.
-// For now, assuming it's similar to deleteUserAgent.
-
-/**
- * Fetches agents belonging to the current user.
- * @returns {Promise<Agent[]>}
- */
 export async function getUserAgents() {
-  try {
-    const response = await apiClient.get('/agents'); // Endpoint for user's own agents
-    return response.data; // Expected: Agent[]
-  } catch (error) {
-    throw handleApiError(error, { operation: 'load user agents' });
-  }
+  try { const response = await apiClient.get('/agents'); return response.data; }
+  catch (error) { throw handleApiError(error, { operation: 'load user agents' }); }
 }
-
-/**
- * @typedef {Object} AgentCreationData
- * @property {string} name
- * @property {string|null} [description]
- * @property {string} system_prompt
- * @property {Array<Object>|null} [configured_mcps]
- * @property {Object|null} [agentpress_tools]
- * @property {boolean|null} [is_default]
- * @property {string|null} [avatar]
- * @property {string|null} [avatar_color]
- */
-
-/**
- * Creates a new agent for the user.
- * @param {AgentCreationData} agentData
- * @returns {Promise<Agent>}
- */
 export async function createAgent(agentData) {
-  try {
-    const response = await apiClient.post('/agents', agentData);
-    return response.data;
-  } catch (error) {
-    throw handleApiError(error, { operation: 'create agent' });
-  }
+  try { const response = await apiClient.post('/agents', agentData); return response.data; }
+  catch (error) { throw handleApiError(error, { operation: 'create agent' }); }
 }
-
-/**
- * Updates an existing agent.
- * @param {string} agentId
- * @param {Partial<AgentCreationData>} agentData
- * @returns {Promise<Agent>}
- */
 export async function updateAgent(agentId, agentData) {
-  try {
-    const response = await apiClient.put(`/agents/${agentId}`, agentData);
-    return response.data;
-  } catch (error) {
-    throw handleApiError(error, { operation: 'update agent', resource: `agent ${agentId}` });
-  }
+  try { const response = await apiClient.put(`/agents/${agentId}`, agentData); return response.data; }
+  catch (error) { throw handleApiError(error, { operation: 'update agent', resource: `agent ${agentId}` }); }
+}
+export async function deleteAgent(agentId) {
+  try { const response = await apiClient.delete(`/agents/${agentId}`); return response.data; }
+  catch (error) { throw handleApiError(error, { operation: 'delete agent', resource: `agent ${agentId}` }); }
+}
+
+// --- Agent Run Functions ---
+export async function startAgentRun(threadId, options = {}) {
+    try { const response = await apiClient.post(`/thread/${threadId}/agent/start`, options); return response.data; }
+    catch (error) { throw handleApiError(error, { operation: 'start agent run', resource: `thread ${threadId}` }); }
+}
+export async function stopAgentRun(agentRunId) {
+    try { const response = await apiClient.post(`/agent-run/${agentRunId}/stop`); return response.data; }
+    catch (error) { throw handleApiError(error, { operation: 'stop agent run', resource: `agent run ${agentRunId}` }); }
+}
+
+// --- Billing Functions ---
+/**
+ * Fetches the current subscription details for the user.
+ * @returns {Promise<object|null>} Subscription object or null on error.
+ */
+export async function getSubscriptionDetails() {
+    try {
+        const response = await apiClient.get('/billing/subscription');
+        return response.data;
+    } catch (error) {
+        // handleApiError will log it. The store action will handle user notification.
+        throw handleApiError(error, { operation: 'fetch subscription details' });
+    }
 }
 
 /**
- * Deletes an agent owned by the user.
- * @param {string} agentId
- * @returns {Promise<{message: string}>}
+ * Fetches a list of invoices for the user.
+ * @param {object} [params] - Optional parameters like limit, starting_after for pagination.
+ * @returns {Promise<Array<object>>} Array of invoice objects or empty array on error.
  */
-export async function deleteAgent(agentId) {
-  try {
-    const response = await apiClient.delete(`/agents/${agentId}`);
-    return response.data;
-  } catch (error) {
-    throw handleApiError(error, { operation: 'delete agent', resource: `agent ${agentId}` });
-  }
+export async function listInvoices(params = {}) {
+    try {
+        const response = await apiClient.get('/billing/invoices', { params });
+        return response.data.invoices || []; // Assuming backend returns { invoices: [] }
+    } catch (error) {
+        throw handleApiError(error, { operation: 'list invoices' });
+    }
+}
+
+/**
+ * Creates a new Stripe Customer Portal session for the user.
+ * @returns {Promise<{url: string}|null>} Object with URL to redirect to, or null on error.
+ */
+export async function createBillingPortalSession() {
+    try {
+        // The backend might need the current page URL to redirect back after portal session.
+        const response = await apiClient.post('/billing/create-portal-session', {
+            return_url: window.location.href // Or a specific settings/billing page URL
+        });
+        return response.data; // Expected: { url: 'stripe_portal_url' }
+    } catch (error) {
+        throw handleApiError(error, { operation: 'create billing portal session' });
+    }
+}
+
+/**
+ * Fetches current usage details for the user's subscription.
+ * @returns {Promise<object|null>} Usage details object or null on error.
+ */
+export async function getUsageDetails() {
+    try {
+        const response = await apiClient.get('/billing/usage'); // Replace with your actual usage endpoint
+        return response.data; // E.g., { agentRuns: { used: 50, limit: 100 }, ... }
+    } catch (error) {
+        throw handleApiError(error, { operation: 'fetch usage details' });
+    }
 }
 
 
-// Health check (uses apiClient without specific auth for this endpoint if public)
+// --- Health Check ---
 export async function checkApiHealth() {
-  try {
-    const response = await apiClient.get(`/health`);
-    return response.data;
-  } catch (error) {
+  try { const response = await apiClient.get(`/health`); return response.data; }
+  catch (error) {
      handleApiError(error, { operation: 'check API health' });
      return { status: 'error', message: error.message || 'Failed to connect to API' };
   }
 }
-
-// Agent run related APIs (will use apiClient) - to be used by currentThreadStore later
-/**
- * Starts an agent run for a given thread.
- * @param {string} threadId
- * @param {object} [options] - Optional parameters like model_name, agent_id
- * @returns {Promise<{agent_run_id: string}>}
- */
-export async function startAgentRun(threadId, options = {}) {
-    try {
-        const response = await apiClient.post(`/thread/${threadId}/agent/start`, options);
-        return response.data; // Expected: { agent_run_id: '...' }
-    } catch (error) {
-        throw handleApiError(error, { operation: 'start agent run', resource: `thread ${threadId}` });
-    }
-}
-
-/**
- * Stops an active agent run.
- * @param {string} agentRunId
- * @returns {Promise<{status: string}>}
- */
-export async function stopAgentRun(agentRunId) {
-    try {
-        const response = await apiClient.post(`/agent-run/${agentRunId}/stop`);
-        return response.data; // Expected: { status: 'stopped' }
-    } catch (error) {
-        throw handleApiError(error, { operation: 'stop agent run', resource: `agent run ${agentRunId}` });
-    }
-}
-
-// ... other API functions (sandbox, billing, transcription) would go here, using apiClient.
-// Example:
-// export async function transcribeAudio(audioFile) {
-//   const formData = new FormData();
-//   formData.append('audio_file', audioFile);
-//   try {
-//     const response = await apiClient.post('/transcription', formData, {
-//       headers: { 'Content-Type': 'multipart/form-data' },
-//     });
-//     return response.data;
-//   } catch (error) {
-//     throw handleApiError(error, { operation: 'transcribe audio' });
-//   }
-// }

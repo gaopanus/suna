@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia';
 import { supabase } from '@/services/supabaseClient';
-import router from '@/router'; // Import router for navigation
-import { useNotificationsStore } from './notifications'; // For global notifications
+import router from '@/router';
+import { useNotificationsStore } from './notifications';
 
 const SESSION_STORAGE_KEY = 'supabase_session';
 
@@ -17,6 +17,7 @@ export const useAuthStore = defineStore('auth', {
     currentUser: (state) => state.user,
     isLoading: (state) => state.loading,
     authError: (state) => state.error,
+    userDisplayName: (state) => state.user?.user_metadata?.full_name || state.user?.email,
   },
   actions: {
     _clearAuthState() {
@@ -26,11 +27,10 @@ export const useAuthStore = defineStore('auth', {
     },
 
     async initializeAuthListener() {
-      // Initial state from localStorage
       if (this.session?.user) {
         this.user = this.session.user;
-      } else if (this.session) { // Session exists but no user? Could be an old/invalid session.
-        this._clearAuthState(); // Clear it.
+      } else if (this.session) {
+        this._clearAuthState();
       }
 
       supabase.auth.onAuthStateChange((event, newSession) => {
@@ -38,29 +38,31 @@ export const useAuthStore = defineStore('auth', {
         this.session = newSession;
         this.user = newSession?.user || null;
         this.loading = false;
-        this.error = null; // Clear error on any auth state change
+        this.error = null;
 
         if (newSession) {
           localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(newSession));
         } else {
-          this._clearAuthState(); // Ensures everything is cleared on SIGNED_OUT
+          this._clearAuthState();
         }
 
         if (event === 'SIGNED_OUT') {
-          // Clear other stores if needed, then navigate
-          // e.g., useProjectStore().clearAllProjectData(); useCurrentThreadStore().resetState();
           if (router.currentRoute.value.meta.requiresAuth) {
             router.push({ name: 'Login', query: { loggedOut: 'true' } });
           }
         } else if (event === 'SIGNED_IN') {
-          const redirectPath = router.currentRoute.value.query.redirect || '/';
-          if (router.currentRoute.value.name === 'Login' || router.currentRoute.value.name === 'Signup' || redirectPath) {
+          const redirectPath = router.currentRoute.value.query.redirect || '/projects'; // Default to /projects
+           // Only redirect if currently on a guest page or if there was a redirect query
+          if (router.currentRoute.value.meta.guestOnly || router.currentRoute.value.query.redirect) {
             router.push(redirectPath);
           }
+        } else if (event === 'USER_UPDATED') {
+            if (newSession?.user) {
+                this.user = { ...this.user, ...newSession.user };
+            }
         }
       });
 
-      // Explicitly fetch session if not already loaded and no listener event has fired yet
       if (!this.session && !this.loading) {
           this.loading = true;
           try {
@@ -80,7 +82,6 @@ export const useAuthStore = defineStore('auth', {
             this.loading = false;
           }
       } else if (this.session && !this.user && this.session.user) {
-          // If session was loaded from localStorage but user object wasn't fully hydrated in state
           this.user = this.session.user;
       }
     },
@@ -95,17 +96,16 @@ export const useAuthStore = defineStore('auth', {
           password: credentials.password,
         });
         if (supaError) throw supaError;
-
-        // onAuthStateChange will handle setting user and session state & localStorage
         notificationsStore.showSuccess('Login successful!');
+        // onAuthStateChange will handle state update and navigation if on login page
         return data;
       } catch (error) {
         console.error('Login error:', error);
         const errorMessage = error.message || 'Login failed. Please check your credentials.';
         this.error = { message: errorMessage, status: error.status };
         notificationsStore.showError(errorMessage);
-        this._clearAuthState(); // Ensure inconsistent state is cleared
-        throw this.error; // Re-throw for component to handle if needed
+        this._clearAuthState();
+        throw this.error;
       } finally {
         this.loading = false;
       }
@@ -129,21 +129,17 @@ export const useAuthStore = defineStore('auth', {
           }
         }
 
-        // onAuthStateChange will set user/session if auto-confirm is on.
-        // If email confirmation is required, data.user will exist but data.session will be null.
         if (data.session) {
           notificationsStore.showSuccess('Signup successful and logged in!');
         } else if (data.user) {
           const confirmMsg = 'Signup successful! Please check your email to confirm your account.';
-          this.error = { message: confirmMsg, isConfirmationPending: true }; // Use error state to show info
-          notificationsStore.showInfo(confirmMsg, { timeout: 0 }); // Persistent info
-        } else if (this.error) { // User already registered error was set
+          this.error = { message: confirmMsg, isConfirmationPending: true };
+          notificationsStore.showInfo(confirmMsg, { timeout: 0 });
+        } else if (this.error) {
             notificationsStore.showError(this.error.message);
         } else {
-            // Should not happen if no error and no user/session
              notificationsStore.showWarning('Signup process completed with an unexpected response.');
         }
-
         return data;
       } catch (error) {
         console.error('Signup error:', error);
@@ -158,41 +154,83 @@ export const useAuthStore = defineStore('auth', {
     },
 
     async logout() {
-      this.loading = true; // Optional: show loading during logout
+      this.loading = true;
       this.error = null;
       const notificationsStore = useNotificationsStore();
       try {
         const { error } = await supabase.auth.signOut();
         if (error) throw error;
-        // State clearing (user, session, localStorage) is handled by onAuthStateChange's 'SIGNED_OUT' event.
-        // Explicitly clear project/thread stores here if they contain user-specific data
-        // Example: useProjectStore().clearUserProjectData();
-        //          useCurrentThreadStore().resetCurrentThreadState();
         notificationsStore.showInfo('You have been logged out.');
       } catch (error) {
         console.error('Logout error:', error);
         const errorMessage = error.message || 'Logout failed.';
         this.error = { message: errorMessage, status: error.status };
         notificationsStore.showError(errorMessage);
-        // Even on error, try to clear local state as a fallback
         this._clearAuthState();
-        router.push('/login'); // Force redirect if listener fails
+        router.push('/login');
         throw this.error;
       } finally {
         this.loading = false;
       }
     },
 
-    async fetchCurrentSession() { // Renamed from fetchUser for clarity
-      // This is mostly for initial load or manual refresh, onAuthStateChange is primary
-      if (this.session && this.user && !this.loading) return { session: this.session, user: this.user };
-
+    async updateUserProfile(profileData) {
       this.loading = true;
-      this.error = null; // Clear previous error before fetching
+      this.error = null;
+      const notificationsStore = useNotificationsStore();
+      try {
+        // Supabase stores this in user_metadata. Ensure keys in profileData are simple.
+        const { data, error: supaError } = await supabase.auth.updateUser({
+          data: profileData
+        });
+        if (supaError) throw supaError;
+        // onAuthStateChange with 'USER_UPDATED' event will update the store's user object.
+        notificationsStore.showSuccess('Profile updated successfully!');
+        return data.user;
+      } catch (error) {
+        console.error('Update user profile error:', error);
+        const errorMessage = error.message || 'Failed to update profile.';
+        this.error = { message: errorMessage, status: error.status };
+        notificationsStore.showError(errorMessage);
+        throw this.error;
+      } finally {
+        this.loading = false;
+      }
+    },
+
+    async changePassword(newPassword) {
+      this.loading = true;
+      this.error = null;
+      const notificationsStore = useNotificationsStore();
+      try {
+        const { data, error: supaError } = await supabase.auth.updateUser({
+          password: newPassword,
+        });
+        if (supaError) throw supaError;
+
+        notificationsStore.showSuccess('Password updated successfully! You might need to log in again if your session was invalidated.');
+        return data.user;
+      } catch (error) {
+        console.error('Change password error:', error);
+        let errorMessage = error.message || 'Failed to change password.';
+        if (error.message && error.message.toLowerCase().includes("weak password")) {
+            errorMessage = "New password is too weak. Please choose a stronger password.";
+        }
+        this.error = { message: errorMessage, status: error.status };
+        notificationsStore.showError(errorMessage);
+        throw this.error;
+      } finally {
+        this.loading = false;
+      }
+    },
+
+    async fetchCurrentSession() {
+      if (this.session && this.user && !this.loading) return { session: this.session, user: this.user };
+      this.loading = true;
+      this.error = null;
       try {
         const { data, error } = await supabase.auth.getSession();
         if (error) throw error;
-
         if (data.session) {
           this.session = data.session;
           this.user = data.session.user;
@@ -204,7 +242,7 @@ export const useAuthStore = defineStore('auth', {
       } catch (error) {
         console.error('Fetch session error:', error);
         this.error = { message: error.message || 'Failed to fetch session.', status: error.status };
-        this._clearAuthState(); // Critical to ensure no stale state
+        this._clearAuthState();
         return null;
       } finally {
         this.loading = false;

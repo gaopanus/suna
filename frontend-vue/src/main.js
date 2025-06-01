@@ -1,22 +1,27 @@
 import { createApp } from 'vue';
 import App from './App.vue';
-import router from './router'; // router needs to be imported before auth store if auth store uses router
+import router from './router';
 import pinia from './store';
 import vuetify from './plugins/vuetify';
+import i18n from './plugins/i18n'; // Import i18n plugin
 import 'roboto-fontface/css/roboto/roboto-fontface.css';
 import '@mdi/font/css/materialdesignicons.css';
 
-import { useAuthStore } from '@/store/auth'; // Import the auth store
+import { useAuthStore } from '@/store/auth';
+import { useThemeStore } from '@/store/themeStore'; // Import theme store
 
 const app = createApp(App);
 
 app.use(pinia); // Use Pinia first so stores are available
 
-// Initialize the Supabase auth listener AFTER Pinia is initialized
-// This ensures the store is ready to react to auth events.
+// Initialize Auth and Theme stores and their initial setup logic
 const authStore = useAuthStore();
-authStore.initializeAuthListener(); // Call the action to set up the listener and load initial session
+authStore.initializeAuthListener();
 
+const themeStore = useThemeStore();
+themeStore.applyInitialTheme(); // Apply theme before mounting
+
+app.use(i18n); // Use i18n plugin
 app.use(router);
 app.use(vuetify);
 
